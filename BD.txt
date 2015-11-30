@@ -1,0 +1,206 @@
+create database licanRay ;
+use licanRay;
+
+
+
+
+create table producto(id_producto int primary key AUTO_INCREMENT, codigo varchar(13) , marca varchar(20), nombre varchar(40),cantidad int, peso double, precio_compra int, precio_venta int);
+
+create table usuario(id_usuario int primary key AUTO_INCREMENT,nombre varchar(30), clave varchar(20), cargo varchar(20), estado TINYINT);
+
+create table caja (id_caja int primary key AUTO_INCREMENT, id_usuario int , dinero int, fecha varchar(10),hora varchar(8),dinero_inicio int, FOREIGN KEY(id_usuario) REFERENCES usuario(id_usuario));
+
+create table ventas (id_venta int primary key AUTO_INCREMENT, total int,cant_productos int, fecha varchar(10),hora varchar(10), id_usuario int, FOREIGN KEY(id_usuario) REFERENCES usuario(id_usuario));
+
+create table ventas_detalle(id_venta int, id_producto int, cant_producto int, sub_total int, FOREIGN KEY(id_venta) REFERENCES ventas(id_venta), FOREIGN KEY(id_producto) REFERENCES producto(id_producto));
+
+create table gastos_extras(id_gasto int primary key AUTO_INCREMENT, id_usuario int, total int, fecha varchar(10),hora varchar(10), motivo varchar(200), FOREIGN KEY(id_usuario) REFERENCES usuario(id_usuario));
+
+==========================================================================================================================================
+
+create table retiro_dinero(id_retiro_dinero int primary key AUTO_INCREMENT, dinero_retiro int NOT NULL, fecha_hora datetime, id_caja int, FOREIGN KEY(id_caja) REFERENCES caja(id_caja));
+
+
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_retiro_dinero`(dinero_r int)
+BEGIN
+declare idcaja int;
+set idcaja:= (select max(id_caja) from caja);
+select idcaja from caja;
+INSERT INTO retiro_dinero(dinero_retiro, fecha_hora, id_caja)
+values (dinero_r, LOCALTIMESTAMP(),idcaja);
+
+update caja
+		set dinero = dinero - dinero_r 
+							  
+	where caja.id_caja = idcaja and estado = 1;
+
+END$$
+
+ALTER TABLE `licanRay`.`caja` ADD COLUMN `total_ventas` INT NULL  AFTER `dinero_inicio` ;
+
+ALTER TABLE `licanRay`.`gastos_extras` DROP FOREIGN KEY `gastos_extras_ibfk_1` ;
+ALTER TABLE `licanRay`.`gastos_extras` DROP COLUMN `id_usuario` , ADD COLUMN `id_caja` INT NOT NULL  AFTER `motivo` , 
+  ADD CONSTRAINT `fk_gastos_extras_1`
+  FOREIGN KEY (`id_caja` )
+  REFERENCES `licanRay`.`caja` (`id_caja` )
+  ON DELETE NO ACTION
+  ON UPDATE NO ACTION
+, DROP INDEX `id_usuario` ;
+
+
+ALTER TABLE `licanRay`.`caja` ADD COLUMN `Total_gastos_extras` INT NOT NULL  AFTER `total_ventas`;
+
+ALTER TABLE `licanRay`.`gastos_extras` CHANGE COLUMN `fecha` `fecha` DATE NULL DEFAULT NULL  , CHANGE COLUMN `hora` `hora` TIME NULL DEFAULT NULL  ;
+
+
+____________________________________________________________________________________
+_____________________________________________________________________________________
+
+alter table producto modify codigo varchar(13);
+alter table ventas modify fecha date;
+
+
+======================================================================================
+ALTER TABLE `licanRay`.`ventas` CHANGE COLUMN `hora` `hora` TIME NULL DEFAULT NULL  ;
+ALTER TABLE `licanRay`.`caja` CHANGE COLUMN `fecha` `fecha` DATE NULL DEFAULT NULL  , CHANGE COLUMN `hora` `hora` TIME NULL DEFAULT NULL  ;
+
+
+-- --------------------------------------------------------------------------------
+-- Routine DDL
+-- Note: comments before and after the routine body will not be stored by the server
+-- --------------------------------------------------------------------------------
+DELIMITER $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_retiro_dinero`(id_user int, dinero_r int)
+BEGIN
+declare idcaja int;
+set idcaja:= (select caja.id_caja from caja where caja.id_usuario = id_user and caja.estado = 1 and caja.id_caja = (select max(caja.id_caja) from caja));
+INSERT INTO retiro_dinero(dinero_retiro, fecha_hora, id_caja)
+values (dinero_r, LOCALTIMESTAMP(),idcaja);
+update caja
+set caja.dinero = ((caja.dinero)-(dinero_r)) 
+where caja.id_caja = idcaja and caja.estado = 1;
+END
+
+
+
+==================================================================
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `gastosExtrasCaja`(idCaja int)
+BEGIN
+    select sum(total) as total from gastos_extras where id_caja = idCaja;
+END$$
+
+delimiter $$
+
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_cerrarCaja`(totalVentas int, totalGastos int, idCaja int)
+BEGIN
+    update caja set total_ventas = totalVentas, total_gastos_extras = totalGastos, estado = 0
+    where id_caja = idCaja;
+END$$
+
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_utilidadCaja`(idCaja int)
+BEGIN
+    select sum((producto.precio_venta - producto.precio_compra) * ventas_detalle.cant_producto) as utilidad 
+    from producto INNER JOIN caja
+    INNER JOIN ventas
+    on caja.id_caja = ventas.id_caja
+    INNER JOIN ventas_detalle
+    on ventas.id_venta = ventas_detalle.id_venta and ventas_detalle.id_producto = producto.id_producto
+    where caja.id_caja = idCaja;
+END$$
+
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_obtenerVenta`(idVenta int)
+BEGIN
+    select producto.codigo, producto.nombre, producto.marca, producto.precio_venta, ventas_detalle.cant_producto,
+    ventas_detalle.sub_total
+    from producto
+    INNER JOIN ventas
+    INNER JOIN ventas_detalle
+    on ventas.id_venta = ventas_detalle.id_venta 
+    and ventas_detalle.id_producto = producto.id_producto
+    where ventas.id_venta = idVenta;
+END$$
+
+
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `sp_obtenerTotalVenta`(idVenta int)
+BEGIN
+    select sum(ventas_detalle.sub_total) as total
+    from producto
+    INNER JOIN ventas
+    INNER JOIN ventas_detalle
+    on ventas.id_venta = ventas_detalle.id_venta 
+    and ventas_detalle.id_producto = producto.id_producto
+    where ventas.id_venta = idVenta;
+END$$
+
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `obtenerVendedorVenta`(idVenta int)
+BEGIN
+    select usuario.nombre as vendedor
+    from usuario
+    INNER JOIN caja
+    on usuario.id_usuario = caja.id_usuario
+    INNER JOIN ventas
+    on caja.id_caja = ventas.id_caja
+    where ventas.id_venta = idVenta ;
+END$$
+
+delimiter $$
+
+CREATE DEFINER=`root`@`localhost` PROCEDURE `obtenerFechaVenta`(idVenta int)
+BEGIN
+    select case DAYNAME(ventas.fecha) 
+    when "Monday" then "Lunes" 
+    when "Tuesday" then "Martes"
+    when "Wednesday" then "Miercoles"
+    when "Thursday" then "Jueves"
+    when "Friday" then "Viernes"
+    when "Saturday" then "Sábado"
+    when "Sunday" then "Domingo"
+    end as nombre_dia ,
+    case month(ventas.fecha)
+    when 1 then "Enero"
+    when 2 then "Febrero"
+    when 3 then "Marzo"
+    when 4 then "Abril"
+    when 5 then "Mayo"
+    when 6 then "Junio"
+    when 7 then "Julio"
+    when 8 then "Agosto"
+    when 9 then "Septiembre"
+    when 10 then "Octubre"
+    when 11 then "Noviembre"
+    when 12 then "Diciembre"
+    end as mes,
+    DAY(ventas.fecha) as dia,
+    YEAR(ventas.fecha) as anio
+    from ventas
+    where ventas.id_venta = idVenta;
+END$$
+
+________________________________________________________________________________
+
+ALTER TABLE `licanRay`.`ventas` 
+ADD COLUMN `peso_total` DOUBLE NULL AFTER `id_caja`;
+
+ALTER TABLE `licanRay`.`ventas_detalle` 
+ADD COLUMN `peso_producto` DOUBLE NULL AFTER `sub_total`;
+
+ALTER TABLE `licanRay`.`ventas` 
+ADD COLUMN `costo_total` VARCHAR(45) NULL AFTER `peso_total`;
+
+
+
+
